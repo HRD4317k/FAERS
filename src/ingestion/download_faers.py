@@ -30,7 +30,9 @@ def main():
     data = r.json()
     
     partitions = data['results']['drug']['event']['partitions']
-    print(f"Found {len(partitions)} files to download.")
+    # Filter for 2023
+    partitions = [p for p in partitions if '2023' in p.get('display_name', '')]
+    print(f"Found {len(partitions)} files to download for 2023.")
     
     for part in partitions:
         url = part['file']
