@@ -1,14 +1,8 @@
 import os
 import requests
-import zipfile
-import tempfile
-from tqdm import tqdm
 from pathlib import Path
+from tqdm import tqdm
 
-# Base URL for FAERS ASCII data
-BASE_URL = "https://fis.fda.gov/content/Exports/faers_ascii_{year}q{quarter}.zip"
-
-# Data directory
 DATA_DIR = Path("../../data/raw/faers")
 
 def download_file(url, target_path):
@@ -27,44 +21,32 @@ def download_file(url, target_path):
             size = file.write(data)
             progress_bar.update(size)
 
-def main(years, quarters):
-    # Ensure directory exists
+def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     
-    for year in years:
-        for quarter in quarters:
-            url = BASE_URL.format(year=year, quarter=quarter)
-            zip_filename = f"faers_ascii_{year}q{quarter}.zip"
-            zip_path = DATA_DIR / zip_filename
-            extract_dir = DATA_DIR / f"{year}q{quarter}"
+    print("Fetching openFDA download links...")
+    r = requests.get("https://api.fda.gov/download.json")
+    r.raise_for_status()
+    data = r.json()
+    
+    partitions = data['results']['drug']['event']['partitions']
+    print(f"Found {len(partitions)} files to download.")
+    
+    for part in partitions:
+        url = part['file']
+        filename = url.split('/')[-1]
+        target_path = DATA_DIR / filename
+        
+        if target_path.exists():
+            print(f"Skipping {filename}, already downloaded.")
+            continue
             
-            if extract_dir.exists():
-                print(f"Skipping {year} Q{quarter}, already extracted.")
-                continue
-                
-            print(f"Downloading {year} Q{quarter} from {url}...")
-            try:
-                download_file(url, zip_path)
-            except Exception as e:
-                print(f"Failed to download {url}: {e}")
-                continue
-                
-            print(f"Extracting {zip_filename}...")
-            try:
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(extract_dir)
-                print(f"Extracted to {extract_dir}")
-                os.remove(zip_path) # Clean up zip file
-                print(f"Deleted {zip_filename}")
-            except Exception as e:
-                print(f"Failed to extract {zip_filename}: {e}")
+        print(f"Downloading {filename}...")
+        try:
+            download_file(url, target_path)
+        except Exception as e:
+            print(f"Failed to download {url}: {e}")
 
 if __name__ == "__main__":
-    # To start, just downloading 2023 Q1
-    # For full 2023-2024, modify this to years=[2023, 2024], quarters=[1, 2, 3, 4]
-    years = [2023]
-    quarters = [1]
-    
-    # Change working directory to the script's directory so relative paths work
     os.chdir(Path(__file__).parent)
-    main(years, quarters)
+    main()

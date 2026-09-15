@@ -1,9 +1,10 @@
 import os
-import glob
+import json
+import zipfile
 import duckdb
 from pathlib import Path
+import glob
 
-# Paths
 DATA_DIR = Path("../../data/raw/faers")
 DB_PATH = Path("../../data/processed/faers.db")
 
@@ -12,120 +13,97 @@ def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(DB_PATH))
     
-    # Create tables if they don't exist
     con.execute("""
         CREATE TABLE IF NOT EXISTS demo (
-            primaryid VARCHAR,
             caseid VARCHAR,
-            caseversion VARCHAR,
-            i_f_code VARCHAR,
-            event_dt VARCHAR,
-            mfr_dt VARCHAR,
-            init_fda_dt VARCHAR,
-            fda_dt VARCHAR,
-            rept_cod VARCHAR,
-            auth_num VARCHAR,
-            mfr_num VARCHAR,
-            mfr_sndr VARCHAR,
-            lit_ref VARCHAR,
-            age VARCHAR,
-            age_cod VARCHAR,
-            age_grp VARCHAR,
+            receive_date VARCHAR,
             sex VARCHAR,
-            e_sub VARCHAR,
-            wt VARCHAR,
-            wt_cod VARCHAR,
-            rept_dt VARCHAR,
-            to_mfr VARCHAR,
-            occp_cod VARCHAR,
-            reporter_country VARCHAR,
-            occr_country VARCHAR
+            age VARCHAR
         )
     """)
     
     con.execute("""
         CREATE TABLE IF NOT EXISTS drug (
-            primaryid VARCHAR,
             caseid VARCHAR,
-            drug_seq VARCHAR,
             role_cod VARCHAR,
-            drugname VARCHAR,
-            prod_ai VARCHAR,
-            val_vbm VARCHAR,
-            route VARCHAR,
-            dose_vbm VARCHAR,
-            cum_dose_chr VARCHAR,
-            cum_dose_unit VARCHAR,
-            dechal VARCHAR,
-            rechal VARCHAR,
-            lot_num VARCHAR,
-            exp_dt VARCHAR,
-            nda_num VARCHAR,
-            dose_amt VARCHAR,
-            dose_unit VARCHAR,
-            dose_form VARCHAR,
-            dose_freq VARCHAR
+            drugname VARCHAR
         )
     """)
     
     con.execute("""
         CREATE TABLE IF NOT EXISTS reac (
-            primaryid VARCHAR,
             caseid VARCHAR,
-            pt VARCHAR,
-            drug_rec_act VARCHAR
-        )
-    """)
-    
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS outc (
-            primaryid VARCHAR,
-            caseid VARCHAR,
-            outc_cod VARCHAR
+            reaction VARCHAR
         )
     """)
     
     return con
 
-def load_data(con):
-    quarters = [d for d in DATA_DIR.iterdir() if d.is_dir()]
+def process_file(zip_path, con):
+    demo_batch = []
+    drug_batch = []
+    reac_batch = []
     
-    for quarter_dir in quarters:
-        print(f"Processing directory: {quarter_dir.name}")
-        
-        # FAERS ASCII files are typically in an 'ascii' folder inside the extracted zip
-        ascii_dir = quarter_dir / "ascii"
-        if not ascii_dir.exists():
-            # sometimes files are in root of zip
-            ascii_dir = quarter_dir
-            
-        demo_files = glob.glob(str(ascii_dir / "DEMO*.txt"))
-        drug_files = glob.glob(str(ascii_dir / "DRUG*.txt"))
-        reac_files = glob.glob(str(ascii_dir / "REAC*.txt"))
-        outc_files = glob.glob(str(ascii_dir / "OUTC*.txt"))
-        
-        for f in demo_files:
-            print(f"Loading {os.path.basename(f)} into demo table...")
-            con.execute(f"COPY demo FROM '{f}' (DELIMITER '$', HEADER, QUOTE '')")
-            
-        for f in drug_files:
-            print(f"Loading {os.path.basename(f)} into drug table...")
-            con.execute(f"COPY drug FROM '{f}' (DELIMITER '$', HEADER, QUOTE '')")
-            
-        for f in reac_files:
-            print(f"Loading {os.path.basename(f)} into reac table...")
-            con.execute(f"COPY reac FROM '{f}' (DELIMITER '$', HEADER, QUOTE '')")
-            
-        for f in outc_files:
-            print(f"Loading {os.path.basename(f)} into outc table...")
-            con.execute(f"COPY outc FROM '{f}' (DELIMITER '$', HEADER, QUOTE '')")
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as z:
+            for filename in z.namelist():
+                if not filename.endswith('.json'):
+                    continue
+                
+                with z.open(filename) as f:
+                    data = json.load(f)
+                    results = data.get('results', [])
+                    
+                    for r in results:
+                        caseid = r.get('safetyreportid')
+                        if not caseid:
+                            continue
+                            
+                        patient = r.get('patient', {})
+                        
+                        demo_batch.append((
+                            caseid,
+                            r.get('receivedate'),
+                            patient.get('patientsex'),
+                            patient.get('patientonsetage')
+                        ))
+                        
+                        for d in patient.get('drug', []):
+                            drug_batch.append((
+                                caseid,
+                                d.get('drugcharacterization'),
+                                d.get('medicinalproduct')
+                            ))
+                            
+                        for react in patient.get('reaction', []):
+                            reac_batch.append((
+                                caseid,
+                                react.get('reactionmeddrapt')
+                            ))
+    except Exception as e:
+        print(f"Error processing {zip_path}: {e}")
+        return
+
+    # Insert batches
+    if demo_batch:
+        con.executemany("INSERT INTO demo VALUES (?, ?, ?, ?)", demo_batch)
+    if drug_batch:
+        con.executemany("INSERT INTO drug VALUES (?, ?, ?)", drug_batch)
+    if reac_batch:
+        con.executemany("INSERT INTO reac VALUES (?, ?)", reac_batch)
 
 def main():
-    os.chdir(Path(__file__).parent)
     con = init_db()
-    load_data(con)
+    zip_files = glob.glob(str(DATA_DIR / "*.json.zip"))
+    
+    print(f"Found {len(zip_files)} zip files to process.")
+    for idx, zip_file in enumerate(zip_files):
+        print(f"[{idx+1}/{len(zip_files)}] Processing {os.path.basename(zip_file)}...")
+        process_file(zip_file, con)
+        
     print("Data loading complete.")
     con.close()
 
 if __name__ == "__main__":
+    os.chdir(Path(__file__).parent)
     main()

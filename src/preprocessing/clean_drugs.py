@@ -16,17 +16,15 @@ def main():
         return
         
     print("Cleaning drug data...")
-    # Example cleaning: deduplicate based on caseid and drug_seq, keep only Primary Suspect (PS) or Secondary Suspect (SS)
+    # Deduplicate and keep only Suspect drugs (role_cod = '1')
     con.execute("""
         CREATE OR REPLACE TABLE clean_drug AS
         SELECT DISTINCT
             caseid,
-            drug_seq,
             drugname,
-            role_cod,
-            route
+            role_cod
         FROM drug
-        WHERE role_cod IN ('PS', 'SS')
+        WHERE role_cod = '1' AND drugname IS NOT NULL
     """)
     print(f"Cleaned drug data created: {con.execute('SELECT COUNT(*) FROM clean_drug').fetchone()[0]} rows.")
     con.close()
