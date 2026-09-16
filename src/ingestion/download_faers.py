@@ -29,10 +29,18 @@ def main():
     r.raise_for_status()
     data = r.json()
     
+import argparse
+
+    parser = argparse.ArgumentParser(description="Download FAERS JSON Data")
+    parser.add_argument("--year", type=str, default="2023", help="Year to download (e.g., 2023). Use 'all' for everything.")
+    args = parser.parse_args()
+    
     partitions = data['results']['drug']['event']['partitions']
-    # Filter for 2023
-    partitions = [p for p in partitions if '2023' in p.get('display_name', '')]
-    print(f"Found {len(partitions)} files to download for 2023.")
+    
+    if args.year.lower() != 'all':
+        partitions = [p for p in partitions if args.year in p.get('display_name', '')]
+        
+    print(f"Found {len(partitions)} files to download for year {args.year}.")
     
     for part in partitions:
         url = part['file']

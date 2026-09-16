@@ -21,9 +21,9 @@ def main():
         CREATE OR REPLACE TABLE clean_reac AS
         SELECT DISTINCT
             caseid,
-            pt as reaction
+            reaction
         FROM reac
-        WHERE pt IS NOT NULL
+        WHERE reaction IS NOT NULL
     """)
     print(f"Cleaned reaction data created: {con.execute('SELECT COUNT(*) FROM clean_reac').fetchone()[0]} rows.")
     con.close()
