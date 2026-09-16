@@ -15,11 +15,8 @@ def get_overall_stats():
         total_drugs = con.execute("SELECT count(DISTINCT drugname) FROM clean_drug").fetchone()[0]
         total_reactions = con.execute("SELECT count(DISTINCT reaction) FROM clean_reac").fetchone()[0]
         
-        serious_reports = con.execute("SELECT count(DISTINCT caseid) FROM outc WHERE outc_cod != 'OT'").fetchone()[0]
-        
         return {
             "Total Reports": f"{total_reports:,}",
-            "Serious Reports": f"{serious_reports:,}",
             "Unique Drugs": f"{total_drugs:,}",
             "Unique Reactions": f"{total_reactions:,}"
         }
@@ -51,20 +48,9 @@ def search_drug_stats(drug_name: str):
         """
         top_adrs = con.execute(q_adrs).fetchdf()
         
-        # Outcomes breakdown
-        q_outcomes = f"""
-            SELECT o.outc_cod, count(DISTINCT o.caseid) as outcome_count
-            FROM outc o
-            JOIN clean_drug d ON o.caseid = d.caseid
-            WHERE d.drugname LIKE '%{drug_name}%'
-            GROUP BY o.outc_cod
-        """
-        outcomes = con.execute(q_outcomes).fetchdf()
-        
         return {
             "reports_count": reports,
-            "top_adrs": top_adrs,
-            "outcomes": outcomes
+            "top_adrs": top_adrs
         }
     except Exception as e:
         print(e)

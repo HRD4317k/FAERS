@@ -1,79 +1,72 @@
 import streamlit as st
 import pandas as pd
+import duckdb
 import sys
 from pathlib import Path
 
-# Add src to path so we can import from src.analytics
 sys.path.append(str(Path(__file__).parent.parent))
-from src.analytics.eda import get_overall_stats, search_drug_stats
+from src.analytics.eda import get_overall_stats, search_drug_stats, DB_PATH
 
-st.set_page_config(page_title="FDA Drug Safety Intelligence", layout="wide")
+st.set_page_config(page_title="FDA Polypharmacy Intelligence", layout="wide")
+st.title("FDA Polypharmacy Intelligence Dashboard")
+st.markdown("Advanced Pharmacovigilance Mining of 3-Drug Interactions using Logistic Regression and FDR.")
 
-st.title("FDA Drug Safety Intelligence 💊")
-st.markdown("A Pharmacovigilance Analytics Platform for Adverse Event Pattern Mining.")
-
-# Dashboard Overview
-st.header("Overview")
-with st.spinner("Loading overall statistics..."):
-    stats = get_overall_stats()
-    
-    if "Error" not in stats:
-        cols = st.columns(4)
-        for i, (key, value) in enumerate(stats.items()):
-            cols[i].metric(key, value)
-    else:
-        st.error(f"Could not load database. Have you run the ingestion pipeline? Error: {stats['Error']}")
+# 1. Overview
+st.header("1. Database Overview")
+stats = get_overall_stats()
+if "Error" not in stats:
+    cols = st.columns(3)
+    for i, (key, value) in enumerate(stats.items()):
+        cols[i].metric(key, value)
+else:
+    st.error(f"Could not load database. {stats['Error']}")
 
 st.divider()
 
-# Drug Explorer
-st.header("Drug Explorer")
-st.markdown("Search for a specific drug (e.g., METFORMIN, WARFARIN, ASPIRIN) to see associated adverse events.")
+# 2. Detected Polypharmacy Signals
+st.header("2. Emerging 3-Drug Polypharmacy Signals")
+st.markdown("These are the most statistically significant 3-drug interactions that passed all gating criteria (Support, ROR, Hierarchical ROR Comparison, 3-Way Logistic Regression, and FDR).")
 
-search_query = st.text_input("Enter Drug Name:")
+try:
+    con = duckdb.connect(str(DB_PATH), read_only=True)
+    # Check if table exists
+    tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
+    if 'polypharmacy_signals' in tables:
+        signals_df = con.execute("SELECT * FROM polypharmacy_signals ORDER BY Emerging_Signal_Score DESC").fetchdf()
+        
+        if len(signals_df) > 0:
+            st.dataframe(signals_df.style.background_gradient(cmap="Reds", subset=['Emerging_Signal_Score', 'Interaction_Strength']), use_container_width=True)
+        else:
+            st.info("No significant signals passed the strict FDR thresholds.")
+    else:
+        st.info("Polypharmacy signals table not found. Please run the `polypharmacy_miner.py` script.")
+except Exception as e:
+    st.error(f"Failed to load polypharmacy signals: {e}")
+finally:
+    if 'con' in locals():
+        con.close()
+
+st.divider()
+
+# 3. Drug Explorer
+st.header("3. Drug Explorer")
+search_query = st.text_input("Enter a Drug Name to see its most reported Adverse Events (e.g., FENTANYL, MORPHINE):")
 
 if search_query:
-    with st.spinner(f"Analyzing FAERS reports for {search_query}..."):
+    with st.spinner(f"Analyzing {search_query}..."):
         drug_data = search_drug_stats(search_query)
-        
         if not drug_data:
-            st.warning(f"No reports found for '{search_query}'. Try a generic name.")
+            st.warning(f"No reports found for '{search_query}'.")
         else:
             st.subheader(f"Results for: {search_query.upper()}")
-            st.metric("Total Reports", f"{drug_data['reports_count']:,}")
+            st.metric("Total Reports involving this drug", f"{drug_data['reports_count']:,}")
             
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("**Top 10 Adverse Events**")
-                st.dataframe(
-                    drug_data['top_adrs'].rename(columns={"reaction": "Adverse Event", "report_count": "Reports"}),
-                    use_container_width=True,
-                    hide_index=True
-                )
-            
-            with col2:
-                st.write("**Outcomes Breakdown**")
-                # Outcome codes in FAERS: DE=Death, HO=Hospitalization, LT=Life-Threatening, DS=Disability, etc.
-                outcome_mapping = {
-                    "DE": "Death", "HO": "Hospitalization - Initial or Prolonged", 
-                    "LT": "Life-Threatening", "DS": "Disability", 
-                    "CA": "Congenital Anomaly", "RI": "Required Intervention",
-                    "OT": "Other Serious (Important Medical Event)"
-                }
-                
-                outcomes_df = drug_data['outcomes'].copy()
-                outcomes_df['Outcome'] = outcomes_df['outc_cod'].map(lambda x: outcome_mapping.get(x, str(x)))
-                st.dataframe(
-                    outcomes_df[['Outcome', 'outcome_count']].rename(columns={'outcome_count': 'Count'}).sort_values(by='Count', ascending=False),
-                    use_container_width=True,
-                    hide_index=True
-                )
+            st.write("**Top 10 Adverse Events**")
+            st.dataframe(
+                drug_data['top_adrs'].rename(columns={"reaction": "Adverse Event", "report_count": "Reports"}),
+                use_container_width=True,
+                hide_index=True
+            )
 
 st.divider()
-st.markdown("""
-<small>
-<b>Disclaimer:</b> This application analyzes spontaneous adverse-event reports for research and exploratory pharmacovigilance. 
-Statistical associations do not establish causality and should not be used as a substitute for clinical judgment or regulatory assessment.
-</small>
-""", unsafe_allow_html=True)
+st.markdown("""<small><b>Disclaimer:</b> Statistical associations identified in FAERS reports do not establish causality.</small>""", unsafe_allow_html=True)
