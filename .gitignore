@@ -29,3 +29,5 @@ coverage.xml
 *.cover
 *.log
 .DS_Store
+
+data/*.duckdb
