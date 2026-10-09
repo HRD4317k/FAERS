@@ -11,7 +11,11 @@ EXCLUDED_REACTIONS = {
     "TOXICITY TO VARIOUS AGENTS", "SUICIDE ATTEMPT", "COMPLETED SUICIDE",
     "SUBSTANCE ABUSE", "ACCIDENTAL OVERDOSE", "DRUG INEFFECTIVE",
     "OFF LABEL USE", "PRODUCT USE IN UNAPPROVED INDICATION",
-    "INTENTIONAL PRODUCT MISUSE", "PRODUCT USE ISSUE"
+    "INTENTIONAL PRODUCT MISUSE", "PRODUCT USE ISSUE",
+    "PLASMA CELL MYELOMA", "COVID-19", "ASTHMA", "RHEUMATOID ARTHRITIS",
+    "PSORIASIS", "DEATH", "PRODUCT DOSE OMISSION ISSUE", "ILLNESS",
+    "CONDITION AGGRAVATED", "INAPPROPRIATE SCHEDULE OF PRODUCT ADMINISTRATION",
+    "INCORRECT DOSE ADMINISTERED", "INTENTIONAL PRODUCT USE ISSUE"
 }
 
 def clean_data(df):
@@ -50,6 +54,11 @@ def mine_polypharmacy_signals(df, min_support=0.01):
     # Focus on top 50 meaningful reactions for processing time
     top_reactions = reactions.head(50).index
     
+    report_df = df.groupby('report_id').agg({
+        'drugs': 'first',
+        'reaction': lambda x: set(x)
+    }).reset_index()
+
     for reaction in top_reactions:
         print(f"Mining signals for: {reaction}")
         
@@ -70,23 +79,21 @@ def mine_polypharmacy_signals(df, min_support=0.01):
         freq_items['length'] = freq_items['itemsets'].apply(lambda x: len(x))
         triplets = freq_items[freq_items['length'] == 3]
         
-        # Calculate ROR for each triplet
-        total_reports = len(df)
-        rx_total = len(rx_df)
+        mask_reaction_report = report_df['reaction'].apply(lambda rx_set: reaction in rx_set)
         
         for _, row in triplets.iterrows():
             triplet = list(row['itemsets'])
             
-            # Count occurrences in full dataset
+            # Count occurrences at the report level
             def has_triplet(drug_list):
                 return all(d in drug_list for d in triplet)
             
-            mask_triplet = df['drugs'].apply(has_triplet)
+            mask_triplet = report_df['drugs'].apply(has_triplet)
             
-            a = (mask_triplet & (df['reaction'] == reaction)).sum()
-            b = (mask_triplet & (df['reaction'] != reaction)).sum()
-            c = (~mask_triplet & (df['reaction'] == reaction)).sum()
-            d = (~mask_triplet & (df['reaction'] != reaction)).sum()
+            a = (mask_triplet & mask_reaction_report).sum()
+            b = (mask_triplet & ~mask_reaction_report).sum()
+            c = (~mask_triplet & mask_reaction_report).sum()
+            d = (~mask_triplet & ~mask_reaction_report).sum()
             
             if a >= 5: # Minimum 5 co-occurrences
                 ror, ror_lcl = calculate_ror((a, b, c, d))
